@@ -1,0 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Share+Tech+Mono&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- RETRO GAME CLIENT STYLING --- */
+:root {
+  --ro-font-header: 'Press Start 2P', monospace;
+  --ro-font-body: 'Share Tech Mono', monospace;
+  --ro-bg-dark: #070505;
+  --ro-panel-bg: #140f0f;
+  --ro-crimson: #900d0d;
+  --ro-gold: #e5a93b;
+}
+
+body {
+  font-family: var(--ro-font-body);
+  background-color: var(--ro-bg-dark);
+  color: #e5e5e5;
+  letter-spacing: 0.05em;
+  /* Subtle CRT monitor scanline finish */
+  background-image: 
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.04));
+  background-size: 100% 4px, 6px 100%;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0c0808;
+}
+::-webkit-scrollbar-thumb {
+  background: #5d070e;
+  border: 1px solid #900d0d;
+}
+
+/* Classic double-beveled window borders */
+.ro-window {
+  background: var(--ro-panel-bg) !important;
+  border: 4px double #8c1d1d;
+  box-shadow: 0 0 0 2px #120e0e, 4px 4px 0px rgba(0, 0, 0, 0.8);
+  image-rendering: pixelated;
+}
+
+.ro-window-header {
+  font-family: var(--ro-font-header);
+  font-size: 0.65rem;
+  background: linear-gradient(90deg, #990a16 0%, #1e0507 100%);
+  border-bottom: 2px solid #5d070e;
+  text-shadow: 1px 1px 0px #000;
+  letter-spacing: 1px;
+}
+
+/* Beveled 3D Action Buttons */
+.ro-btn {
+  font-family: var(--ro-font-body);
+  font-weight: bold;
+  text-transform: uppercase;
+  border-top: 2px solid #ff4d4d;
+  border-left: 2px solid #ff4d4d;
+  border-right: 2px solid #4a050a;
+  border-bottom: 2px solid #4a050a;
+  background-color: #900d0d;
+  color: #ffffff;
+  box-shadow: 1px 1px 0px #000;
+  image-rendering: pixelated;
+  transition: none;
+}
+
+.ro-btn:active:not(:disabled) {
+  border-top: 2px solid #4a050a;
+  border-left: 2px solid #4a050a;
+  border-right: 2px solid #ff4d4d;
+  border-bottom: 2px solid #ff4d4d;
+  background-color: #73070f;
+  transform: translate(1px, 1px);
+}
+
+.ro-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: #444;
+  background-color: #222;
+}
+
+/* Inset Form Controls */
+.ro-input {
+  background: #090707 !important;
+  border-top: 2px solid #1a1515;
+  border-left: 2px solid #1a1515;
+  border-right: 2px solid #443c3c;
+  border-bottom: 2px solid #443c3c;
+  color: var(--ro-gold) !important;
+  font-family: var(--ro-font-body);
+}
+
+.ro-input:focus {
+  outline: none;
+  border-color: #ff4d4d !important;
+}
