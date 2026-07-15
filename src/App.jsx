@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Shield, Users, RefreshCw, Send, Plus, Trash2, Calendar, Database } from 'lucide-react';
+import { Shield, Users, RefreshCw, Send, Plus, Trash2, Calendar, Database, Terminal } from 'lucide-react';
 
 // Connect to Supabase using Vite environment variables
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
@@ -39,20 +39,37 @@ export default function App() {
   const [allocationResult, setAllocationResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
+  
+  // --- ERROR CONSOLE SYSTEM STATES ---
+  const [logs, setLogs] = useState([]);
+  const [isLogOpen, setIsLogOpen] = useState(false);
 
   const currentWeek = getPHWeekIdentifier();
 
+  // Helper function to append structured system logs
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+    setLogs(prev => [{ timestamp, message, type }, ...prev]);
+  };
+
   useEffect(() => {
     if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      addLog("System initialized. Connecting to database...", "info");
       fetchData();
+    } else {
+      addLog("Supabase Environment Variables missing! Check your VITE_ variables.", "error");
     }
     const savedWebhook = localStorage.getItem('ro_discord_webhook');
-    if (savedWebhook) setDiscordWebhook(savedWebhook);
+    if (savedWebhook) {
+      setDiscordWebhook(savedWebhook);
+      addLog("Discord Webhook loaded from local cache.", "info");
+    }
   }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      addLog("Fetching live guild roster from master database...", "info");
       // 1. Fetch live queue structure
       const { data: memberData, error: memberErr } = await supabase
         .from('guild_members')
@@ -60,25 +77,32 @@ export default function App() {
         .order('column_type', { ascending: true })
         .order('queue_order', { ascending: true });
       
-      if (!memberErr && memberData) setMembers(memberData);
+      if (memberErr) throw memberErr;
+      if (memberData) {
+        setMembers(memberData);
+        addLog(`Successfully loaded ${memberData.length} members from roster.`, "success");
+      }
 
       // 2. Query weekly allocations dynamically using the week_identifier column
+      addLog(`Querying historic database entries for Week ${currentWeek}...`, "info");
       const { data: allocationData, error: allocErr } = await supabase
         .from('daily_allocations')
         .select('member_name, fragments')
         .eq('week_identifier', currentWeek);
 
-      if (!allocErr && allocationData) {
-        // Map individual allocations to an object structure: { memberName: totalWeeklyCount }
+      if (allocErr) throw allocErr;
+      if (allocationData) {
         const lootSumMap = {};
         allocationData.forEach(row => {
           const count = Array.isArray(row.fragments) ? row.fragments.length : 0;
           lootSumMap[row.member_name] = (lootSumMap[row.member_name] || 0) + count;
         });
         setWeeklyLoot(lootSumMap);
+        addLog(`Weekly drop summaries calculated for active cycle.`, "success");
       }
     } catch (err) {
       console.error("Data synchronization error:", err);
+      addLog(`Sync Failure: ${err.message || JSON.stringify(err)}`, "error");
     } finally {
       setLoading(false);
     }
@@ -88,79 +112,99 @@ export default function App() {
     e.preventDefault();
     if (!newMemberName.trim()) return;
 
-    const columnMembers = members.filter(m => m.column_type === newMemberColumn);
-    const nextOrder = columnMembers.length > 0 ? Math.max(...columnMembers.map(m => m.queue_order)) + 1 : 1;
+    try {
+      addLog(`Adding member '${newMemberName.trim()}' to Column ${newMemberColumn}...`, "info");
+      const columnMembers = members.filter(m => m.column_type === newMemberColumn);
+      const nextOrder = columnMembers.length > 0 ? Math.max(...columnMembers.map(m => m.queue_order)) + 1 : 1;
 
-    const { error } = await supabase
-      .from('guild_members')
-      .insert([{ name: newMemberName.trim(), column_type: newMemberColumn, queue_order: nextOrder }]);
+      const { error } = await supabase
+        .from('guild_members')
+        .insert([{ name: newMemberName.trim(), column_type: newMemberColumn, queue_order: nextOrder }]);
 
-    if (!error) {
+      if (error) throw error;
+
+      addLog(`Member '${newMemberName.trim()}' successfully inserted.`, "success");
       setNewMemberName('');
       fetchData();
+    } catch (err) {
+      console.error(err);
+      addLog(`Add Member Failed: ${err.message || JSON.stringify(err)}`, "error");
     }
   };
 
-  const handleDeleteMember = async (id) => {
-    const { error } = await supabase.from('guild_members').delete().eq('id', id);
-    if (!error) fetchData();
+  const handleDeleteMember = async (id, name) => {
+    try {
+      addLog(`Attempting to remove member '${name}' from roster...`, "info");
+      const { error } = await supabase.from('guild_members').delete().eq('id', id);
+      if (error) throw error;
+
+      addLog(`Member '${name}' deleted successfully.`, "success");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      addLog(`Delete Failed: ${err.message || JSON.stringify(err)}`, "error");
+    }
   };
 
   const calculateAllocation = () => {
-    let availableFragments = parseInt(totalFragments) || 0;
-    let fragmentCounter = 1;
-    
-    const listA = members.filter(m => m.column_type === 'A').sort((a,b) => a.queue_order - b.queue_order);
-    const listB = members.filter(m => m.column_type === 'B').sort((a,b) => a.queue_order - b.queue_order);
-    const listC = members.filter(m => m.column_type === 'C').sort((a,b) => a.queue_order - b.queue_order);
+    try {
+      addLog("Beginning distribution dry-run allocation calculation...", "info");
+      let availableFragments = parseInt(totalFragments) || 0;
+      let fragmentCounter = 1;
+      
+      const listA = members.filter(m => m.column_type === 'A').sort((a,b) => a.queue_order - b.queue_order);
+      const listB = members.filter(m => m.column_type === 'B').sort((a,b) => a.queue_order - b.queue_order);
+      const listC = members.filter(m => m.column_type === 'C').sort((a,b) => a.queue_order - b.queue_order);
 
-    const allocations = { A: [], B: [], C: [] };
+      const allocations = { A: [], B: [], C: [] };
 
-    // --- CRITERIA A ---
-    // Rule: Max 5 members per drop event. Each gets 3 fragments.
-    const eligibleCountA = Math.min(5, listA.length);
-    for (let i = 0; i < eligibleCountA; i++) {
-      if (availableFragments >= 3) {
-        const member = listA[i];
-        const assigned = [fragmentCounter++, fragmentCounter++, fragmentCounter++];
-        allocations.A.push({ name: member.name, id: member.id, fragments: assigned });
-        availableFragments -= 3;
+      // --- CRITERIA A ---
+      const eligibleCountA = Math.min(5, listA.length);
+      for (let i = 0; i < eligibleCountA; i++) {
+        if (availableFragments >= 3) {
+          const member = listA[i];
+          const assigned = [fragmentCounter++, fragmentCounter++, fragmentCounter++];
+          allocations.A.push({ name: member.name, id: member.id, fragments: assigned });
+          availableFragments -= 3;
+        }
       }
-    }
 
-    // --- CRITERIA B ---
-    // Rule: Sequential assignment. Each gets 2 fragments.
-    let indexB = 0;
-    while (availableFragments >= 2 && listB.length > 0 && indexB < listB.length) {
-      const member = listB[indexB];
-      const assigned = [fragmentCounter++, fragmentCounter++];
-      allocations.B.push({ name: member.name, id: member.id, fragments: assigned });
-      availableFragments -= 2;
-      indexB++;
-    }
+      // --- CRITERIA B ---
+      let indexB = 0;
+      while (availableFragments >= 2 && listB.length > 0 && indexB < listB.length) {
+        const member = listB[indexB];
+        const assigned = [fragmentCounter++, fragmentCounter++];
+        allocations.B.push({ name: member.name, id: member.id, fragments: assigned });
+        availableFragments -= 2;
+        indexB++;
+      }
 
-    // --- CRITERIA C ---
-    // Rule: Sequential assignment. Each gets 1 fragment.
-    let indexC = 0;
-    while (availableFragments >= 1 && listC.length > 0 && indexC < listC.length) {
-      const member = listC[indexC];
-      const assigned = [fragmentCounter++];
-      allocations.C.push({ name: member.name, id: member.id, fragments: assigned });
-      availableFragments -= 1;
-      indexC++;
-    }
+      // --- CRITERIA C ---
+      let indexC = 0;
+      while (availableFragments >= 1 && listC.length > 0 && indexC < listC.length) {
+        const member = listC[indexC];
+        const assigned = [fragmentCounter++];
+        allocations.C.push({ name: member.name, id: member.id, fragments: assigned });
+        availableFragments -= 1;
+        indexC++;
+      }
 
-    setAllocationResult({
-      allocations,
-      leftover: availableFragments,
-      timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }) + " GMT+8"
-    });
+      setAllocationResult({
+        allocations,
+        leftover: availableFragments,
+        timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }) + " GMT+8"
+      });
+      addLog("Distribution draft calculated successfully.", "success");
+    } catch (err) {
+      addLog(`Allocation Computation Error: ${err.message || JSON.stringify(err)}`, "error");
+    }
   };
 
   const commitAndPushToDiscord = async () => {
     if (!allocationResult) return;
     setLoading(true);
     setSaveStatus('');
+    addLog("Initiating full system commit...", "info");
 
     try {
       // 1. Prepare history entries to log in database
@@ -178,13 +222,16 @@ export default function App() {
 
       // Write daily history to Supabase
       if (dbEntries.length > 0) {
+        addLog(`Writing ${dbEntries.length} daily log rows to Supabase history...`, "info");
         const { error: insertError } = await supabase
           .from('daily_allocations')
           .insert(dbEntries);
         if (insertError) throw insertError;
+        addLog("Daily allocations transaction history saved to database.", "success");
       }
 
       // 2. Update queue orders in master table to rotate recipients to back
+      addLog("Rotating queue positions for rewarded players...", "info");
       for (const col of ['A', 'B', 'C']) {
         const rewarded = allocationResult.allocations[col];
         if (rewarded.length === 0) continue;
@@ -194,15 +241,18 @@ export default function App() {
 
         for (const item of rewarded) {
           maxOrder += 1;
-          await supabase
+          const { error: updateErr } = await supabase
             .from('guild_members')
             .update({ queue_order: maxOrder })
             .eq('id', item.id);
+          if (updateErr) throw updateErr;
         }
       }
+      addLog("Guild queue sequence rotations updated successfully.", "success");
 
       // 3. Post to Discord Channel
       if (discordWebhook) {
+        addLog("Preparing and sending webhook broadcast payload to Discord...", "info");
         localStorage.setItem('ro_discord_webhook', discordWebhook);
         
         let discordMessage = `⚔️ **PUPPET FRAGMENTS ALLOCATION LOG** ⚔️\n`;
@@ -238,7 +288,7 @@ export default function App() {
           discordMessage += `⚠️ *Leftover count: ${allocationResult.leftover} pieces saved in vault.*\n`;
         }
 
-        await fetch(discordWebhook, {
+        const discordRes = await fetch(discordWebhook, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -247,21 +297,27 @@ export default function App() {
             content: discordMessage
           })
         });
+        
+        if (!discordRes.ok) throw new Error(`Discord returned status ${discordRes.status}`);
+        addLog("Payload pushed successfully to Discord channels.", "success");
+      } else {
+        addLog("No Discord Webhook URL provided. Skipping broadcast.", "info");
       }
 
       setSaveStatus(`Success! Log saved for week ${currentWeek} and queue rotated.`);
       setAllocationResult(null);
       fetchData();
     } catch (err) {
-      setSaveStatus('Database commit failed.');
       console.error(err);
+      addLog(`Commit Failure: ${err.message || JSON.stringify(err)}`, "error");
+      setSaveStatus('Database commit failed.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 p-6">
+    <div className="min-h-screen bg-neutral-950 p-6 relative">
       {/* Header Banner */}
       <header className="max-w-7xl mx-auto mb-8 border-b-4 border-double border-red-900/60 pb-6 flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
@@ -279,7 +335,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 pb-16">
         {/* Left Column: Config Panel */}
         <div className="space-y-6 lg:col-span-1">
           <div className="ro-window relative overflow-hidden">
@@ -424,7 +480,7 @@ export default function App() {
                           <span className="font-mono text-neutral-600 text-[10px] mr-1.5">#{idx + 1}</span>
                           <span className="truncate flex-1 font-bold">{m.name}</span>
                           <button 
-                            onClick={() => handleDeleteMember(m.id)}
+                            onClick={() => handleDeleteMember(m.id, m.name)}
                             className="text-neutral-600 hover:text-red-500 p-0.5 transition"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -474,6 +530,83 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* --- ERROR CONSOLE TRIGGER BUTTON (FIXED POSITION) --- */}
+      <div className="fixed bottom-4 right-4 z-40">
+        <button 
+          onClick={() => setIsLogOpen(true)}
+          className={`ro-btn flex items-center gap-2 px-4 py-2 text-xs font-mono shadow-xl ${
+            logs.some(l => l.type === 'error')
+              ? 'border-red-500 text-red-400 animate-pulse bg-red-950 hover:bg-red-900'
+              : 'border-neutral-700 text-neutral-300 bg-neutral-900 hover:bg-neutral-800'
+          }`}
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          SYSTEM CONSOLE ({logs.length})
+        </button>
+      </div>
+
+      {/* --- TERMINAL POPUP OVERLAY MODAL --- */}
+      {isLogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="ro-window w-full max-w-2xl overflow-hidden font-mono flex flex-col max-h-[80vh]">
+            
+            {/* Modal Title Bar */}
+            <div className="ro-window-header text-white px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span>📟</span>
+                <span>SYSTEM DIAGNOSTIC LOGS</span>
+              </div>
+              <button 
+                onClick={() => setIsLogOpen(false)}
+                className="text-neutral-400 hover:text-white transition-colors text-lg font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Log Output Screen */}
+            <div className="p-4 bg-black/95 overflow-y-auto space-y-2 flex-1 max-h-[50vh] text-xs scrollbar">
+              {logs.length === 0 ? (
+                <p className="text-neutral-600 italic">Console is completely clear. No events logged.</p>
+              ) : (
+                logs.map((log, index) => (
+                  <div key={index} className="flex gap-2 items-start py-1 border-b border-neutral-900">
+                    <span className="text-neutral-600 select-none">[{log.timestamp}]</span>
+                    <span className={`flex-1 break-all ${
+                      log.type === 'error' ? 'text-red-500 font-bold' : 
+                      log.type === 'success' ? 'text-emerald-400' : 
+                      'text-amber-500'
+                    }`}>
+                      {log.type === 'error' ? '>> ERROR: ' : log.type === 'success' ? '>> SUCCESS: ' : '>> INFO: '}
+                      {log.message}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Controls bar */}
+            <div className="flex justify-between items-center px-4 py-3 bg-neutral-900/60 border-t-2 border-red-950">
+              <button 
+                onClick={() => {
+                  setLogs([]);
+                  addLog("Logs flushed by user interface console controller.", "info");
+                }}
+                className="text-red-500 hover:underline text-xs"
+              >
+                Flush Logs
+              </button>
+              <button 
+                onClick={() => setIsLogOpen(false)}
+                className="ro-btn px-4 py-1.5 text-xs"
+              >
+                Close Console
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
